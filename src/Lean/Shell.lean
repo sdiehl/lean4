@@ -11,6 +11,7 @@ import Lean.Elab.ParseImportsFast
 import Lean.Server.Watchdog
 import Lean.Server.FileWorker
 import Lean.Compiler.IR.EmitC
+import Lean.Compiler.IR.EmitRust
 
 /-  Lean companion to  `shell.cpp` -/
 
@@ -246,6 +247,7 @@ structure ShellOptions where
   ileanFileName? : Option System.FilePath := none
   cFileName? : Option System.FilePath := none
   bcFileName? : Option System.FilePath := none
+  rustFileName? : Option System.FilePath := none
   jsonOutput : Bool := false
   errorOnKinds : Array Name := #[]
   printStats : Bool := false
@@ -328,6 +330,8 @@ def ShellOptions.process (opts : ShellOptions)
     return {opts with cFileName? := ← checkOptArg "c" optArg?}
   | 'b' => -- `-b, --bc=fname`
     return {opts with bcFileName? := ← checkOptArg "b" optArg?}
+  | 'U' => -- `-U, --rust=fname`
+    return {opts with rustFileName? := ← checkOptArg "U" optArg?}
   | 's' => -- `-s, --tstack=num`
     let arg ← checkOptArg "s" optArg?
     let some stackSize := arg.toNat?
@@ -545,6 +549,13 @@ def shellMain (args : List String) (opts : ShellOptions) : IO UInt32 := do
           return 1
       profileitIO "C code generation" opts.leanOpts do
         let data ← IO.ofExcept <| IR.emitC env mainModuleName
+        out.write data.toUTF8
+    if let some rs := opts.rustFileName? then
+      let .ok out ← IO.FS.Handle.mk rs .write |>.toBaseIO
+        | IO.eprintln s!"failed to create '{rs}'"
+          return 1
+      profileitIO "Rust code generation" opts.leanOpts do
+        let data ← IO.ofExcept <| IR.emitRust env mainModuleName
         out.write data.toUTF8
     if let some bc := opts.bcFileName? then
       initLLVM

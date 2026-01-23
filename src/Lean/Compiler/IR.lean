@@ -22,6 +22,7 @@ public import Lean.Compiler.IR.RC
 public import Lean.Compiler.IR.ExpandResetReuse
 public import Lean.Compiler.IR.UnboxResult
 public import Lean.Compiler.IR.EmitC
+public import Lean.Compiler.IR.EmitRust
 public import Lean.Compiler.IR.Sorry
 public import Lean.Compiler.IR.ToIR
 public import Lean.Compiler.IR.ToIRType
