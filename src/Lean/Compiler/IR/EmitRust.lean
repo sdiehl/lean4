@@ -20,7 +20,7 @@ structure Context where
   jpMap      : JPParamsMap := {}
   mainFn     : FunId := default
   mainParams : Array Param := #[]
-  hasJPs     : Bool := false  -- whether function has join points
+  hasJPs     : Bool := false
 
 abbrev M := ReaderT Context (EStateM String String)
 
@@ -156,8 +156,6 @@ def emitDec (x : VarId) (n : Nat) (checkRef : Bool) : M Unit := do
   emitLn ");"
 
 def emitDel (x : VarId) : M Unit := do
-  -- Use lean_free_object_only which frees memory without decrementing children
-  -- The IR's del instruction means the caller has already handled children's ref counts
   emit "lean_free_object_only("; emit x; emitLn ");"
 
 def emitSetTag (x : VarId) (i : Nat) : M Unit := do
@@ -196,7 +194,6 @@ def emitJmp (j : JoinPointId) (xs : Array Arg) : M Unit := do
       if !p.ty.isVoid then
         let x := xs[i]
         emit p.x; emit " = "; emitArg x; emitLn ";"
-    -- Only set _jp_state if we have join points (state machine mode)
     if ctx.hasJPs then
       emit "_jp_state = "; emit j.idx; emitLn "; continue '_start;"
     else
@@ -426,7 +423,6 @@ def emitTailCall (v : Expr) : M Unit :=
         let p := ps[i]
         let y := ys[i]!
         emit p.x; emit " = "; emitArg y; emitLn ";"
-      -- Only set _jp_state if we have join points (state machine mode)
       if ctx.hasJPs then
         emitLn "_jp_state = 0; continue '_start;"
       else
@@ -476,11 +472,9 @@ partial def emitJPBody (j : JoinPointId) : FnBody → M Unit
   | FnBody.jdecl j' _ v b => do
     if j == j' then emitBlock v
     else do
-      -- Search in both the join point body and the continuation
       emitJPBody j v
       emitJPBody j b
   | FnBody.case _ _ _ alts => do
-    -- Search in case alternatives
     for alt in alts do
       match alt with
       | Alt.ctor _ body => emitJPBody j body
