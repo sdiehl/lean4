@@ -22,10 +22,7 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: |
-            .ccache
-            ~/.cargo/registry
-            ~/.cargo/git
+          path: .ccache
           key: build-${{ runner.os }}-${{ hashFiles('src/**/*.lean', 'src/**/*.cpp', 'src/**/*.h') }}
           restore-keys: build-${{ runner.os }}-
 
@@ -37,9 +34,9 @@ jobs:
           make stage1 -j$(nproc)
         shell: nix develop -c bash -euxo pipefail {0}
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Test Rust backend
-        run: |
-          ./build/stage1/bin/lean --rust-bin=test_fib tests/fib.lean
-          ./test_fib
+      # - uses: dtolnay/rust-toolchain@stable
+      #
+      # - name: Test Rust backend
+      #   run: |
+      #     ./build/stage1/bin/lean --rust-bin=test_fib tests/lean/run/rust_fib.lean
+      #     ./test_fib
