@@ -1,25 +1,30 @@
-This is the repository for **Lean 4**.
+# Lean 4 Rust Backend
 
-# About
+This is a fork of Lean 4 with an experimental Rust code generator.
 
-- [Quickstart](https://lean-lang.org/install/)
-- [Homepage](https://lean-lang.org)
-- [Theorem Proving Tutorial](https://lean-lang.org/theorem_proving_in_lean4/)
-- [Functional Programming in Lean](https://lean-lang.org/functional_programming_in_lean/)
-- [Documentation Overview](https://lean-lang.org/learn/)
-- [Language Reference](https://lean-lang.org/doc/reference/latest/)
-- [Release notes](RELEASES.md) starting at v4.0.0-m3
-- [Examples](https://lean-lang.org/examples/)
-- [External Contribution Guidelines](CONTRIBUTING.md)
+## Build
 
-# Installation
+```bash
+make -j -C build/release
+```
 
-See [Install Lean](https://lean-lang.org/install/).
+## Usage
 
-# Contributing
+```bash
+./build/release/stage1/bin/lean --rust-bin=output input.lean
+./output
+```
 
-Please read our [Contribution Guidelines](CONTRIBUTING.md) first.
+The runtime is automatically cloned and built to `~/.lean/lean-runtime` on first use.
 
-# Building from Source
+To use a custom runtime location:
 
-See [Building Lean](doc/make/index.md).
+```bash
+export LEAN_RUNTIME_PATH=/path/to/lean-runtime
+```
+
+## Generate Rust Source Only
+
+```bash
+./build/release/stage1/bin/lean --rust=output.rs input.lean
+```

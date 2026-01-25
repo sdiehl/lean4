@@ -19,6 +19,9 @@ open System
 
 namespace Lean
 
+def defaultRustcArgs : Array String := #["--edition", "2021", "-O"]
+def rustRuntimeRepo : String := "https://github.com/sdiehl/lean-runtime.git"
+
 /--
 Decodes an array of bytes that encode a string as [UTF-8](https://en.wikipedia.org/wiki/UTF-8) into
 the corresponding string. Invalid UTF-8 characters in the byte array are replaced with `U+FFFD`
@@ -248,6 +251,7 @@ structure ShellOptions where
   cFileName? : Option System.FilePath := none
   bcFileName? : Option System.FilePath := none
   rustFileName? : Option System.FilePath := none
+  rustBinFileName? : Option System.FilePath := none
   jsonOutput : Bool := false
   errorOnKinds : Array Name := #[]
   printStats : Bool := false
@@ -332,6 +336,8 @@ def ShellOptions.process (opts : ShellOptions)
     return {opts with bcFileName? := ← checkOptArg "b" optArg?}
   | 'U' => -- `-U, --rust=fname`
     return {opts with rustFileName? := ← checkOptArg "U" optArg?}
+  | 'X' => -- `-X, --rust-bin=fname`
+    return {opts with rustBinFileName? := ← checkOptArg "X" optArg?}
   | 's' => -- `-s, --tstack=num`
     let arg ← checkOptArg "s" optArg?
     let some stackSize := arg.toNat?
@@ -557,6 +563,37 @@ def shellMain (args : List String) (opts : ShellOptions) : IO UInt32 := do
       profileitIO "Rust code generation" opts.leanOpts do
         let data ← IO.ofExcept <| IR.emitRust env mainModuleName
         out.write data.toUTF8
+    if let some bin := opts.rustBinFileName? then
+      let rsFile := bin.toString ++ ".rs"
+      let .ok out ← IO.FS.Handle.mk rsFile .write |>.toBaseIO
+        | IO.eprintln s!"failed to create '{rsFile}'"
+          return 1
+      profileitIO "Rust code generation" opts.leanOpts do
+        let data ← IO.ofExcept <| IR.emitRust env mainModuleName
+        out.write data.toUTF8
+      let runtimePath ← do
+        if let some p ← IO.getEnv "LEAN_RUNTIME_PATH" then pure (FilePath.mk p)
+        else
+          let home ← IO.getEnv "HOME"
+          pure (FilePath.mk (home.getD "/tmp") / ".lean" / "lean-runtime")
+      let rlib := runtimePath / "target" / "release" / "liblean_runtime.rlib"
+      if !(← rlib.pathExists) then
+        if !(← runtimePath.pathExists) then
+          IO.eprintln s!"Cloning lean-runtime to {runtimePath}..."
+          let _ ← IO.Process.output { cmd := "git", args := #["clone", rustRuntimeRepo, runtimePath.toString] }
+        IO.eprintln "Building lean-runtime..."
+        let _ ← IO.Process.output { cmd := "cargo", args := #["build", "--release"], cwd := runtimePath }
+      let deps := runtimePath / "target" / "release" / "deps"
+      let res ← IO.Process.output {
+        cmd := "rustc"
+        args := defaultRustcArgs ++ #[rsFile,
+                  "--extern", s!"lean_runtime={rlib}",
+                  "-L", deps.toString, "-o", bin.toString]
+      }
+      if res.exitCode != 0 then
+        IO.eprintln res.stderr
+        return 1
+      IO.FS.removeFile rsFile
     if let some bc := opts.bcFileName? then
       initLLVM
       profileitIO "LLVM code generation" opts.leanOpts do
