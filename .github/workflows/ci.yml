@@ -11,6 +11,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: true
@@ -33,6 +35,22 @@ jobs:
           cmake .. --preset release -B .
           make stage1 -j$(nproc)
         shell: nix develop -c bash -euxo pipefail {0}
+
+      - name: Package
+        run: |
+          mkdir -p lean4-rust
+          cp -r build/stage1/bin lean4-rust/
+          cp -r build/stage1/lib lean4-rust/
+          tar -czvf lean4-rust-linux-x86_64.tar.gz lean4-rust
+
+      - name: Release
+        if: github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          files: lean4-rust-linux-x86_64.tar.gz
+          make_latest: true
 
       # - uses: dtolnay/rust-toolchain@stable
       #

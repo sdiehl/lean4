@@ -316,8 +316,14 @@ def emitPartialApp (z : VarId) (f : FunId) (ys : Array Arg) : M Unit := do
     let y := ys[i]
     emit "lean_closure_set("; emit z; emit ", "; emit i; emit ", "; emitArg y; emitLn ");"
 
+def closureMaxArgs : Nat := 8
+
 def emitApp (z : VarId) (f : VarId) (ys : Array Arg) : M Unit := do
-  emitLhs z; emit "lean_apply_"; emit ys.size; emit "("; emit f; emit ", "; emitArgs ys; emitLn ");"
+  if ys.size > closureMaxArgs then
+    emit "{ let _aargs: [*mut LeanObject; "; emit ys.size; emit "] = ["; emitArgs ys; emitLn "];"
+    emitLhs z; emit "lean_apply_m("; emit f; emit ", "; emit ys.size; emitLn ", _aargs.as_ptr()); }"
+  else
+    emitLhs z; emit "lean_apply_"; emit ys.size; emit "("; emit f; emit ", "; emitArgs ys; emitLn ");"
 
 def emitBoxFn (xType : IRType) : M Unit :=
   match xType with
@@ -350,6 +356,10 @@ def emitUnbox (z : VarId) (t : IRType) (x : VarId) : M Unit := do
 def emitIsShared (z : VarId) (x : VarId) : M Unit := do
   emitLhs z; emit "!lean_is_exclusive("; emit x; emitLn ") as u8;"
 
+def hexDigit (n : UInt8) : Char :=
+  if n < 10 then Char.ofNat (n.toNat + '0'.toNat)
+  else Char.ofNat (n.toNat - 10 + 'a'.toNat)
+
 def quoteString (s : String) : String :=
   let q := "\""
   let q := s.foldl
@@ -359,6 +369,10 @@ def quoteString (s : String) : String :=
       else if c == '\t' then "\\t"
       else if c == '\\' then "\\\\"
       else if c == '\"' then "\\\""
+      else if c.toNat < 32 || c.toNat > 126 then
+        let bytes := String.singleton c |>.toUTF8
+        bytes.foldl (fun acc b =>
+          acc ++ "\\x" ++ String.singleton (hexDigit (b / 16)) ++ String.singleton (hexDigit (b % 16))) ""
       else String.singleton c)
     q
   q ++ "\""
@@ -412,6 +426,21 @@ def isTailCall (x : VarId) (v : Expr) (b : FnBody) : M Bool := do
   | Expr.fap f _, FnBody.ret (.var y) => return f == ctx.mainFn && x == y
   | _, _ => pure false
 
+def paramEqArg (p : Param) (x : Arg) : Bool :=
+  match x with
+  | .var x => p.x == x
+  | .erased => false
+
+/--
+Check whether any parameter `p_i` appears as argument `y_j` for some `j > i`.
+If so, sequential assignment `p_i = y_i; ...; p_j = p_i` would clobber `p_i`.
+-/
+def overwriteParam (ps : Array Param) (ys : Array Arg) : Bool :=
+  let n := ps.size
+  n.any fun i _ =>
+    let p := ps[i]
+    (i+1, n).anyI fun j _ _ => paramEqArg p ys[j]!
+
 def emitTailCall (v : Expr) : M Unit :=
   match v with
   | Expr.fap _ ys => do
@@ -419,10 +448,23 @@ def emitTailCall (v : Expr) : M Unit :=
     let ps := ctx.mainParams
     if h : ps.size = ys.size then
       let (ps, ys) := ps.zip ys |>.filter (fun (p, _) => !p.ty.isVoid) |>.unzip
-      ps.size.forM fun i _ => do
-        let p := ps[i]
-        let y := ys[i]!
-        emit p.x; emit " = "; emitArg y; emitLn ";"
+      if overwriteParam ps ys then
+        emitLn "{"
+        ps.size.forM fun i _ => do
+          let p := ps[i]
+          let y := ys[i]!
+          unless paramEqArg p y do
+            emit "let _tmp_"; emit i; emit ": "; emit (toRustType p.ty); emit " = "; emitArg y; emitLn ";"
+        ps.size.forM fun i _ => do
+          let p := ps[i]
+          let y := ys[i]!
+          unless paramEqArg p y do emit p.x; emit " = _tmp_"; emit i; emitLn ";"
+        emitLn "}"
+      else
+        ps.size.forM fun i _ => do
+          let p := ps[i]
+          let y := ys[i]!
+          unless paramEqArg p y do emit p.x; emit " = "; emitArg y; emitLn ";"
       if ctx.hasJPs then
         emitLn "_jp_state = 0; continue '_start;"
       else
