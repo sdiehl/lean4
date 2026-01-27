@@ -473,7 +473,7 @@ protected theorem eq_iff_le_and_ge : ∀{a b : Nat}, a = b ↔ a ≤ b ∧ b ≤
 instance : Std.Antisymm ( . ≤ . : Nat → Nat → Prop) where
   antisymm _ _ h₁ h₂ := Nat.le_antisymm h₁ h₂
 
-instance : Std.Trichotomous (. < . : Nat → Nat → Prop) where
+instance Nat.instTrichotomousLt : Std.Trichotomous (. < . : Nat → Nat → Prop) where
   trichotomous _ _ h₁ h₂ := Nat.le_antisymm (Nat.ge_of_not_lt h₂) (Nat.ge_of_not_lt h₁)
 
 set_option linter.missingDocs false in
