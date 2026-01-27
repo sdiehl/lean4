@@ -363,19 +363,6 @@ def hexDigit (n : UInt8) : Char :=
   if n < 10 then Char.ofNat (n.toNat + '0'.toNat)
   else Char.ofNat (n.toNat - 10 + 'a'.toNat)
 
-def hexDigitUpper (n : Nat) : Char :=
-  if n < 10 then Char.ofNat (n + '0'.toNat)
-  else Char.ofNat (n - 10 + 'a'.toNat)
-
-/-- Format a Nat as a hex string (no leading zeros). -/
-def natToHex (n : Nat) : String :=
-  if n == 0 then "0"
-  else
-    let rec go (n : Nat) (acc : String) : String :=
-      if n == 0 then acc
-      else go (n / 16) (String.singleton (hexDigitUpper (n % 16)) ++ acc)
-    go n ""
-
 def quoteString (s : String) : String :=
   let q := "\""
   let q := s.foldl
@@ -392,7 +379,7 @@ def quoteString (s : String) : String :=
           acc ++ "\\x" ++ String.singleton (hexDigit (b / 16)) ++ String.singleton (hexDigit (b % 16))) ""
       else if c.toNat > 126 then
         -- Non-ASCII: use \u{NNNN} Unicode escape (Rust-compatible)
-        "\\u{" ++ natToHex c.toNat ++ "}"
+        "\\u{" ++ String.ofList (Nat.toDigits 16 c.toNat) ++ "}"
       else String.singleton c)
     q
   q ++ "\""
@@ -568,6 +555,7 @@ def emitDeclAux (d : Decl) : M Unit := do
     match d with
     | .fdecl (f := f) (xs := xs) (type := t) (body := b) .. =>
       let baseName ← toRustName f
+      emitLn "#[no_mangle]"
       emit "pub unsafe fn "
       if xs.size > 0 then
         let xs := xs.filter (fun p => !p.ty.isVoid)
@@ -605,6 +593,42 @@ def emitFns : M Unit := do
   let decls := getDecls env
   decls.reverse.forM emitDecl
 
+/-- Emit `extern "Rust"` declarations for functions defined in imported modules
+    that are referenced by the current module's function bodies. This enables
+    separate compilation: each module's .rs file can be compiled independently
+    and linked together. -/
+def emitExternDecls : M Unit := do
+  let env ← getEnv
+  let decls := getDecls env
+  -- Build set of names defined in this module
+  let modDecls : NameSet := decls.foldl (fun s d => s.insert d.name) {}
+  -- Collect all function names referenced by this module's function bodies
+  let usedDecls : NameSet := decls.foldl (fun s d => collectUsedDecls env d (s.insert d.name)) {}
+  -- Find imported declarations (used but not defined locally)
+  let externDecls := usedDecls.toList.filter (fun n => !modDecls.contains n)
+  unless externDecls.isEmpty do
+    emitLn "extern \"Rust\" {"
+    externDecls.forM fun n => do
+      let decl ← getDecl n
+      -- Skip extern C functions (provided by runtime or C libraries)
+      match getExternNameFor env `c decl.name with
+      | some _ => pure ()
+      | none =>
+        unless hasInitAttr env decl.name do
+          let ps := decl.params
+          let baseName ← toRustName n
+          if ps.isEmpty then
+            emit "    fn _init_"; emit baseName; emit "() -> "; emit (toRustType decl.resultType); emitLn ";"
+          else
+            let ps := ps.filter (fun p => !p.ty.isVoid)
+            emit "    fn "; emit baseName; emit "("
+            ps.size.forM fun i _ => do
+              if i > 0 then emit ", "
+              emit "_: "; emit (toRustType ps[i].ty)
+            emit ") -> "; emit (toRustType decl.resultType); emitLn ";"
+    emitLn "}"
+    emitLn ""
+
 def emitFileHeader : M Unit := do
   let modName ← getModName
   emitLn "// Lean compiler output (Rust backend)"
@@ -616,6 +640,7 @@ def emitFileHeader : M Unit := do
   emitLn "#![allow(dead_code)]"
   emitLn "#![allow(unreachable_code)]"
   emitLn "#![allow(unused_assignments)]"
+  emitLn "#![allow(improper_ctypes)]"
   emitLn ""
   emitLn "use lean_runtime::*;"
   emitLn ""
@@ -660,6 +685,7 @@ def emitMainFnIfNeeded : M Unit := do
 
 def main : M Unit := do
   emitFileHeader
+  emitExternDecls
   emitFns
   emitMainFnIfNeeded
 
