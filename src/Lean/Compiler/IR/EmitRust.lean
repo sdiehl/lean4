@@ -363,6 +363,19 @@ def hexDigit (n : UInt8) : Char :=
   if n < 10 then Char.ofNat (n.toNat + '0'.toNat)
   else Char.ofNat (n.toNat - 10 + 'a'.toNat)
 
+def hexDigitUpper (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (n + '0'.toNat)
+  else Char.ofNat (n - 10 + 'a'.toNat)
+
+/-- Format a Nat as a hex string (no leading zeros). -/
+def natToHex (n : Nat) : String :=
+  if n == 0 then "0"
+  else
+    let rec go (n : Nat) (acc : String) : String :=
+      if n == 0 then acc
+      else go (n / 16) (String.singleton (hexDigitUpper (n % 16)) ++ acc)
+    go n ""
+
 def quoteString (s : String) : String :=
   let q := "\""
   let q := s.foldl
@@ -372,10 +385,14 @@ def quoteString (s : String) : String :=
       else if c == '\t' then "\\t"
       else if c == '\\' then "\\\\"
       else if c == '\"' then "\\\""
-      else if c.toNat < 32 || c.toNat > 126 then
+      else if c.toNat < 32 then
+        -- Control characters: use \x (always <= 0x1f, so valid in Rust)
         let bytes := String.singleton c |>.toUTF8
         bytes.foldl (fun acc b =>
           acc ++ "\\x" ++ String.singleton (hexDigit (b / 16)) ++ String.singleton (hexDigit (b % 16))) ""
+      else if c.toNat > 126 then
+        -- Non-ASCII: use \u{NNNN} Unicode escape (Rust-compatible)
+        "\\u{" ++ natToHex c.toNat ++ "}"
       else String.singleton c)
     q
   q ++ "\""
