@@ -298,6 +298,9 @@ def emitFullApp (z : VarId) (f : FunId) (ys : Array Arg) : M Unit := do
       emit "_init_"
       emitRustName f
       emit "()"
+      if decl.resultType.isObj then
+        emitLn ";"
+        emit "if !lean_is_scalar("; emit z; emit ") { lean_mark_persistent("; emit z; emit "); }"
     else if ys.size > 0 then
       emitRustName f
       let (ys, _) := ys.zip ps |>.filter (fun (_, p) => !p.ty.isVoid) |>.unzip
