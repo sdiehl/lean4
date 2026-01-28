@@ -52,9 +52,17 @@ jobs:
           files: lean4-rust-linux-x86_64.tar.gz
           make_latest: true
 
-      # - uses: dtolnay/rust-toolchain@stable
-      #
-      # - name: Test Rust backend
-      #   run: |
-      #     ./build/stage1/bin/lean --rust-bin=test_fib tests/lean/run/rust_fib.lean
-      #     ./test_fib
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Clone lean-runtime
+        run: git clone https://github.com/sdiehl/lean-runtime.git ../lean-runtime
+
+      - name: Build lean-runtime
+        run: cd ../lean-runtime && cargo build --release
+
+      - name: Test Rust backend
+        run: |
+          export LEAN_RUST_RUNTIME=$(pwd)/../lean-runtime
+          ./tests/rust-backend/run-tests.sh

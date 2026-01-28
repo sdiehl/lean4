@@ -905,5 +905,9 @@ public def buildRustExe
           pure (val == "1" || val == "true")
         else
           pure false
-      compileRustExe exeFile entryRs importRsFiles runtimeLib runtimeDeps rustc rustfmt keepArtifacts
+      -- Find Init Rust modules in sysroot
+      let initRustDir := lean.sysroot / "lib" / "lean" / "rust"
+      let initRustDir? ← do
+        if (← initRustDir.pathExists) then pure (some initRustDir) else pure none
+      compileRustExe exeFile entryRs importRsFiles runtimeLib runtimeDeps rustc rustfmt keepArtifacts initRustDir?
     return art.path

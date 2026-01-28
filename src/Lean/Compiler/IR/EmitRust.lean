@@ -679,9 +679,9 @@ def emitInitFn : M Unit := do
       let some idx := env.getModuleIdx? imp.module
         | throw "(internal) import without module index"
       let pkg? := env.getModulePackageByIdx? idx
-      -- Only call init for direct imports from same package that aren't from stdlib (Init prefix)
-      let isStdlib := imp.module.getRoot == `Init
-      if pkg? == currentPkg && !isStdlib then
+      -- Call init for direct imports from same package OR Init modules
+      let isInit := imp.module.getRoot == `Init
+      if pkg? == currentPkg || isInit then
         let fn := mkModuleInitializationFunctionName imp.module pkg?
         let rustMod := moduleNameToRustIdent imp.module
         impInitCalls := impInitCalls.push (rustMod, fn)
@@ -734,14 +734,12 @@ def emitExternDecls : M Unit := do
     else
       match env.getModuleIdxFor? n with
       | some idx =>
-        -- Only import modules from the same package that aren't stdlib
-        let modPkg := env.getModulePackageByIdx? idx
-        if modPkg == currentPkg then
-          if h : idx.toNat < env.header.moduleNames.size then
-            let modName := env.header.moduleNames[idx.toNat]
-            -- Don't import stdlib modules (Init prefix)
-            unless modName.getRoot == `Init do
-              moduleNames := moduleNames.insert modName
+        if h : idx.toNat < env.header.moduleNames.size then
+          let modName := env.header.moduleNames[idx.toNat]
+          -- Include both user modules and Init modules
+          let modPkg := env.getModulePackageByIdx? idx
+          if modPkg == currentPkg || modName.getRoot == `Init then
+            moduleNames := moduleNames.insert modName
       | none => pure ()
   -- Emit use declarations for each source module
   for modName in moduleNames.toList do

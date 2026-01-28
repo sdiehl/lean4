@@ -166,6 +166,7 @@ Other modules are declared via `mod` at the top of the entry module so that
 Parameters:
 - `rustfmt`: If true (default), run rustfmt on generated code before compilation
 - `keepArtifacts`: If true, keep the .rust-build directory after compilation for debugging
+- `initRustDir`: Directory containing pre-compiled Init .rs files (optional)
 -/
 public def compileRustExe
   (binFile : FilePath) (entryRsFile : FilePath) (importRsFiles : Array FilePath)
@@ -173,16 +174,24 @@ public def compileRustExe
   (rustc : FilePath := "rustc")
   (rustfmt : Bool := true)
   (keepArtifacts : Bool := false)
+  (initRustDir : Option FilePath := none)
 : LogIO Unit := do
   createParentDirs binFile
   -- Create a temporary build directory for the Rust crate
   let buildDir := binFile.parent.getD "." / ".rust-build"
   IO.FS.createDirAll buildDir
-  -- Generate mod declarations for all imported modules
+  -- Generate mod declarations for all imported modules (user modules)
   let mut modDecls := ""
   for rsFile in importRsFiles do
     let modName := rsFile.fileStem.getD "unknown"
     modDecls := modDecls ++ s!"#[path = \"{rsFile}\"]\nmod {modName};\n"
+  -- Add Init modules if initRustDir is provided
+  if let some initDir := initRustDir then
+    let initFiles ← initDir.readDir
+    for entry in initFiles do
+      if entry.path.extension == some "rs" then
+        let modName := entry.path.fileStem.getD "unknown"
+        modDecls := modDecls ++ s!"#[path = \"{entry.path}\"]\nmod {modName};\n"
   -- Create main.rs with inner attributes, mod declarations, then stripped entry content
   -- We provide our own standard set of inner attributes and strip them from the entry module
   let mainRs := buildDir / "main.rs"
