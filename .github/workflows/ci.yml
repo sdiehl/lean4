@@ -55,20 +55,22 @@ jobs:
 
       - name: Package
         run: |
+          DATE=$(date +%d-%m-%Y)
           mkdir -p lean4-rust/bin lean4-rust/lib/lean
           cp -r build/stage1/bin/* lean4-rust/bin/
           # Copy only essential shared libraries (not .olean dirs or static libs)
           cp build/stage1/lib/lean/*.so lean4-rust/lib/lean/ 2>/dev/null || true
           cp build/stage1/lib/lean/*.dylib lean4-rust/lib/lean/ 2>/dev/null || true
-          tar -czvf lean4-rust-linux-x86_64.tar.gz lean4-rust
+          tar -czvf lean4-rust-${DATE}.tar.gz lean4-rust
+          echo "RELEASE_DATE=${DATE}" >> $GITHUB_ENV
 
       - name: Release
         if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.sha }}
-          name: Build ${{ github.sha }}
-          files: lean4-rust-linux-x86_64.tar.gz
+          tag_name: ${{ env.RELEASE_DATE }}
+          name: Build ${{ env.RELEASE_DATE }}
+          files: lean4-rust-${{ env.RELEASE_DATE }}.tar.gz
           make_latest: true
 
   # =============================================================================

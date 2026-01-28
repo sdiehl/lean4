@@ -1,0 +1,73 @@
+#!/bin/bash
+# Compile all Init modules to bytecode with correct module names
+#
+# Usage: ./compile-init-bytecode.sh [output_dir]
+#
+# This script compiles all Init/*.lean files to .leanbc bytecode files
+# using the --root flag to ensure correct module names.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LEAN="$SCRIPT_DIR/build/release/stage1/bin/lean"
+SRC_DIR="$SCRIPT_DIR/src"
+OUTPUT_DIR="${1:-/tmp/init-bytecode}"
+
+export LEAN_PATH="$SCRIPT_DIR/build/release/stage1/lib/lean"
+
+if [ ! -x "$LEAN" ]; then
+    echo "Error: Lean compiler not found at $LEAN"
+    echo "Run 'make -j -C build/release' first"
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+echo "Compiling Init modules to bytecode..."
+echo "Source: $SRC_DIR"
+echo "Output: $OUTPUT_DIR"
+echo ""
+
+success=0
+failed=0
+skipped=0
+
+# Find all Init .lean files
+while IFS= read -r -d '' lean_file; do
+    # Get relative path from src dir
+    rel_path="${lean_file#$SRC_DIR/}"
+    # Convert to module name (Init/Data/List.lean -> Init.Data.List)
+    mod_name="${rel_path%.lean}"
+    mod_name="${mod_name//\//.}"
+    # Output file
+    bc_file="$OUTPUT_DIR/${mod_name}.leanbc"
+
+    # Skip if output is newer than input
+    if [ -f "$bc_file" ] && [ "$bc_file" -nt "$lean_file" ]; then
+        ((skipped++))
+        continue
+    fi
+
+    if "$LEAN" --root="$SRC_DIR" -Y "$bc_file" "$lean_file" 2>/dev/null; then
+        ((success++))
+        # Show progress every 50 files
+        if (( success % 50 == 0 )); then
+            echo "  Compiled $success files..."
+        fi
+    else
+        ((failed++))
+        echo "  FAILED: $mod_name"
+    fi
+done < <(find "$SRC_DIR/Init" -name "*.lean" -print0 | sort -z)
+
+echo ""
+echo "Done!"
+echo "  Success: $success"
+echo "  Failed:  $failed"
+echo "  Skipped: $skipped (up to date)"
+echo ""
+
+# Calculate total size
+total_size=$(du -sh "$OUTPUT_DIR" | cut -f1)
+file_count=$(find "$OUTPUT_DIR" -name "*.leanbc" | wc -l | tr -d ' ')
+echo "Output: $file_count bytecode files ($total_size)"

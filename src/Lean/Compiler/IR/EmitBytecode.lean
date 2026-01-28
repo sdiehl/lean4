@@ -1,8 +1,3 @@
-/-
-Copyright (c) 2024 Lean FRO LLC. All rights reserved.
-Released under Apache 2.0 license as described in the file LICENSE.
-Authors: Stephen Diehl
--/
 module
 
 prelude
@@ -22,13 +17,15 @@ The bytecode format (.leanbc) is a compact binary representation.
 ## File Format
 
 ```
-Header (24 bytes):
+Header (32 bytes):
   magic: [u8; 4] = "LNBC"
   version: u32 = 1
   num_strings: u32
   num_functions: u32
   num_externs: u32
+  num_constants: u32
   entry_function: u32
+  init_function: u32 (0xFFFFFFFF if none)
 
 String pool:
   For each string:
@@ -444,11 +441,20 @@ partial def emitExpr (z : VarId) (t : IRType) (e : Expr) : M Unit := do
   | .fap f args =>
     match ← getExternCName f with
     | some extName =>
-      emitArgs args
-      let extIdx ← internExtern extName args.size.toUInt8
+      -- For extern calls, we must filter out erased arguments
+      let decl ← getDecl f
+      let ps := decl.params
+      let mut nonErasedArgs : Array Arg := #[]
+      for i in [:args.size] do
+        let ty := ps[i]!.ty
+        if !ty.isErased && !ty.isVoid then
+          nonErasedArgs := nonErasedArgs.push args[i]!
+      for arg in nonErasedArgs do
+        emitArg arg
+      let extIdx ← internExtern extName nonErasedArgs.size.toUInt8
       emitByte opCallExtern
       emitU32 extIdx
-      emitByte args.size.toUInt8
+      emitByte nonErasedArgs.size.toUInt8
     | none =>
       match ← getFuncIndex f with
       | some funcIdx =>
@@ -861,7 +867,9 @@ def serializeModule : M ByteArray := do
   out := out ++ toLE32 ms.strings.size.toUInt32
   out := out ++ toLE32 ms.functions.size.toUInt32
   out := out ++ toLE32 ms.externs.size.toUInt32
+  out := out ++ toLE32 0  -- num_constants (reserved for future use)
   out := out ++ toLE32 ms.entry
+  out := out ++ toLE32 0xFFFFFFFF  -- init_func (none)
 
   -- String pool
   for s in ms.strings do
