@@ -668,16 +668,23 @@ def emitInitFn : M Unit := do
       (getExternNameFor env `c n.getPrefix).isSome
     unless isCExtern || isBoxedCExtern do
       hasExternalLeanDecls := true; break
-  -- Collect imported module init functions (only in multi-module mode)
+  -- Collect imported module init functions (only for direct imports from the same package)
+  -- Direct imports are those explicitly listed in the current module's `import` statements.
+  -- We don't call init for transitively imported stdlib modules like Init.
+  let currentPkg := env.getModulePackage?
+  let directImports : NameSet := env.imports.foldl (fun s i => s.insert i.module) {}
   let mut impInitCalls : Array (String × String) := #[]  -- (rustModIdent, initFnName)
   if hasExternalLeanDecls then
     for imp in env.imports do
       let some idx := env.getModuleIdx? imp.module
         | throw "(internal) import without module index"
       let pkg? := env.getModulePackageByIdx? idx
-      let fn := mkModuleInitializationFunctionName imp.module pkg?
-      let rustMod := moduleNameToRustIdent imp.module
-      impInitCalls := impInitCalls.push (rustMod, fn)
+      -- Only call init for direct imports from same package that aren't from stdlib (Init prefix)
+      let isStdlib := imp.module.getRoot == `Init
+      if pkg? == currentPkg && !isStdlib then
+        let fn := mkModuleInitializationFunctionName imp.module pkg?
+        let rustMod := moduleNameToRustIdent imp.module
+        impInitCalls := impInitCalls.push (rustMod, fn)
   -- Emit the init function
   emitLn ""
   emitLn "static mut G_INITIALIZED: bool = false;"
@@ -698,17 +705,22 @@ def emitInitFn : M Unit := do
 /-- Emit `use crate::module::*` imports for functions defined in imported modules
     that are referenced by the current module's function bodies. In multi-module
     mode, each module is a separate .rs file within a Cargo crate, and cross-module
-    references use Rust's module system. -/
+    references use Rust's module system.
+
+    Only imports modules from the same package as the current module. External
+    modules (like Init) are handled via the lean_runtime crate and don't need
+    explicit Rust imports. -/
 def emitExternDecls : M Unit := do
   let env ← getEnv
   let decls := getDecls env
+  let currentPkg := env.getModulePackage?
   -- Build set of names defined in this module
   let modDecls : NameSet := decls.foldl (fun s d => s.insert d.name) {}
   -- Collect all function names referenced by this module's function bodies
   let usedDecls : NameSet := decls.foldl (fun s d => collectUsedDecls env d (s.insert d.name)) {}
   -- Find imported declarations (used but not defined locally)
   let externDecls := usedDecls.toList.filter (fun n => !modDecls.contains n)
-  -- Collect unique source modules for non-C-extern declarations
+  -- Collect unique source modules for non-C-extern declarations from the same package
   let mut moduleNames : NameSet := {}
   for n in externDecls do
     let decl ← getDecl n
@@ -722,9 +734,14 @@ def emitExternDecls : M Unit := do
     else
       match env.getModuleIdxFor? n with
       | some idx =>
-        if h : idx.toNat < env.header.moduleNames.size then
-          let modName := env.header.moduleNames[idx.toNat]
-          moduleNames := moduleNames.insert modName
+        -- Only import modules from the same package that aren't stdlib
+        let modPkg := env.getModulePackageByIdx? idx
+        if modPkg == currentPkg then
+          if h : idx.toNat < env.header.moduleNames.size then
+            let modName := env.header.moduleNames[idx.toNat]
+            -- Don't import stdlib modules (Init prefix)
+            unless modName.getRoot == `Init do
+              moduleNames := moduleNames.insert modName
       | none => pure ()
   -- Emit use declarations for each source module
   for modName in moduleNames.toList do

@@ -349,6 +349,53 @@ public def findLakeInstall? : BaseIO (Option LakeInstall) := do
     return some {home}
   return none
 
+/-- Path information about the local Rust installation for the Lean Rust backend. -/
+public structure RustInstall where
+  /-- Path to the `rustc` compiler. -/
+  rustc : FilePath := "rustc"
+  /-- Path to the Lean Rust runtime crate (liblean_runtime.rlib). -/
+  runtimeLib : FilePath
+  /-- Path to the runtime's dependencies directory. -/
+  runtimeDeps : FilePath
+  deriving Inhabited, Repr
+
+/--
+Attempt to detect a Rust installation by checking the `RUSTC` and `LEAN_RUST_RUNTIME`
+environment variables. If `LEAN_RUST_RUNTIME` is not set, looks for a pre-built runtime
+at `<lean-sysroot>/lib/rust/liblean_runtime.rlib`.
+-/
+public def findRustInstall? (leanSysroot : FilePath) : BaseIO (Option RustInstall) := do
+  -- Find rustc
+  let rustc ← do
+    if let some rustc ← IO.getEnv "RUSTC" then
+      pure <| FilePath.mk rustc
+    else
+      -- Check if rustc is in PATH by trying to run it
+      let act : IO Bool := do
+        let out ← IO.Process.output { cmd := "rustc", args := #["--version"] }
+        pure (out.exitCode == 0)
+      if (← act.catchExceptions fun _ => pure false) then
+        pure "rustc"
+      else
+        return none
+  -- Find the runtime library
+  let (runtimeLib, runtimeDeps) ← do
+    if let some runtimePath ← IO.getEnv "LEAN_RUST_RUNTIME" then
+      -- User-specified runtime path (points to the crate directory)
+      let runtimeLib := FilePath.mk runtimePath / "target" / "release" / "liblean_runtime.rlib"
+      let runtimeDeps := FilePath.mk runtimePath / "target" / "release" / "deps"
+      pure (runtimeLib, runtimeDeps)
+    else
+      -- Look for bundled runtime in Lean sysroot
+      let runtimeLib := leanSysroot / "lib" / "rust" / "liblean_runtime.rlib"
+      let runtimeDeps := leanSysroot / "lib" / "rust" / "deps"
+      pure (runtimeLib, runtimeDeps)
+  -- Verify the runtime exists
+  if (← runtimeLib.pathExists) then
+    return some { rustc, runtimeLib, runtimeDeps }
+  else
+    return none
+
 /--
 Attempt to automatically detect an Elan, Lake, and Lean installation.
 

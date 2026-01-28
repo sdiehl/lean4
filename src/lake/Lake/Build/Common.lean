@@ -848,3 +848,62 @@ public def buildLeanExe
         #["-L", lean.leanLibDir.toString] ++ lean.ccLinkFlags sharedLean
       compileExe exeFile args lean.cc
     return art.path
+
+/--
+Build an executable from Rust source files using the Lean Rust backend.
+
+This function compiles all module .rs files together into a single executable
+using rustc. The entry module (containing `fn main()`) is used as the crate root,
+with other modules included via `mod` declarations.
+-/
+public def buildRustExe
+  (exeFile : FilePath)
+  (entryRsJob : Job FilePath) (importRsJobs : Array (Job FilePath))
+: SpawnM (Job FilePath) :=
+  entryRsJob.bindM (sync := true) fun entryRs => do
+  (Job.collectArray importRsJobs "importRsFiles").mapM fun importRsFiles => do
+    addPlatformTrace -- executables are platform-dependent artifacts
+    let art ← buildArtifactUnlessUpToDate exeFile (ext := FilePath.exeExtension) (exe := true) (restore := true) do
+      let lean ← getLeanInstall
+      -- Find Rust runtime - check LEAN_RUST_RUNTIME env var or bundled location
+      let runtimePath ← do
+        if let some path ← IO.getEnv "LEAN_RUST_RUNTIME" then
+          pure <| FilePath.mk path
+        else
+          -- Check for bundled runtime in sysroot
+          let bundled := lean.sysroot / "lib" / "rust"
+          if (← (bundled / "liblean_runtime.rlib").pathExists) then
+            pure bundled
+          else
+            error "Rust runtime not found. Set LEAN_RUST_RUNTIME to the lean-runtime crate directory."
+      let runtimeLib := runtimePath / "target" / "release" / "liblean_runtime.rlib"
+      let runtimeDeps := runtimePath / "target" / "release" / "deps"
+      -- Check if we're using a crate directory or pre-built library directory
+      let (runtimeLib, runtimeDeps) ←
+        if (← runtimeLib.pathExists) then
+          pure (runtimeLib, runtimeDeps)
+        else if (← (runtimePath / "liblean_runtime.rlib").pathExists) then
+          pure (runtimePath / "liblean_runtime.rlib", runtimePath / "deps")
+        else
+          error s!"Rust runtime library not found at {runtimeLib}. Build with: cd $LEAN_RUST_RUNTIME && cargo build --release"
+      -- Find rustc
+      let rustc ← do
+        if let some rustc ← IO.getEnv "RUSTC" then
+          pure <| FilePath.mk rustc
+        else
+          pure "rustc"
+      -- Check environment variables for rustfmt/keepArtifacts options
+      -- LAKE_RUST_FMT=0 disables rustfmt (enabled by default)
+      -- LAKE_RUST_KEEP_ARTIFACTS=1 keeps build artifacts for debugging
+      let rustfmt ← do
+        if let some val ← IO.getEnv "LAKE_RUST_FMT" then
+          pure (val != "0" && val != "false")
+        else
+          pure true
+      let keepArtifacts ← do
+        if let some val ← IO.getEnv "LAKE_RUST_KEEP_ARTIFACTS" then
+          pure (val == "1" || val == "true")
+        else
+          pure false
+      compileRustExe exeFile entryRs importRsFiles runtimeLib runtimeDeps rustc rustfmt keepArtifacts
+    return art.path

@@ -26,31 +26,43 @@ private def LeanExe.recBuildExe (self : LeanExe) : FetchM (Job FilePath) :=
   so that errors in the import block of transitive imports will not kill this
   job before the root is built.
   -/
-  let mut objJobs := #[]
-  let mut libJobs := #[]
-  let shouldExport := self.supportInterpreter
-  for facet in self.root.nativeFacets shouldExport do
-    objJobs := objJobs.push <| ← facet.fetch self.root
-  let .ok imports _ ← (← self.root.transImports.fetch).wait
-    | error s!"bad imports (see the '{self.root.name.toString}' job for details)"
-  for mod in imports do
-    for facet in mod.nativeFacets shouldExport do
-      objJobs := objJobs.push <| ← facet.fetch mod
-  for link in self.moreLinkObjs do
-    objJobs := objJobs.push <| ← link.fetchIn self.pkg
-  let libs := imports.foldl (·.insert ·.lib) OrdHashSet.empty |>.toArray
-  for lib in libs do
-    for link in lib.moreLinkObjs do
-      objJobs := objJobs.push <| ← link.fetchIn lib.pkg
-    for link in lib.moreLinkLibs do
-      libJobs := libJobs.push <| ← link.fetchIn lib.pkg
-  for link in self.moreLinkLibs do
-    libJobs := libJobs.push <| ← link.fetchIn self.pkg
-  let deps := (← (← self.pkg.transDeps.fetch).await).push self.pkg
-  for dep in deps do
-    for lib in dep.externLibs do
-      objJobs := objJobs.push <| ← lib.static.fetch
-  buildLeanExe self.file objJobs libJobs self.weakLinkArgs self.linkArgs self.sharedLean
+  -- Check if we're using the Rust backend
+  if self.root.backend == .rust then
+    -- Rust backend: collect .rs files and compile with rustc
+    let entryRsJob ← self.root.rs.fetch
+    let .ok imports _ ← (← self.root.transImports.fetch).wait
+      | error s!"bad imports (see the '{self.root.name.toString}' job for details)"
+    let mut importRsJobs := #[]
+    for mod in imports do
+      importRsJobs := importRsJobs.push <| ← mod.rs.fetch
+    buildRustExe self.file entryRsJob importRsJobs
+  else
+    -- C/LLVM backend: collect object files and link with cc
+    let mut objJobs := #[]
+    let mut libJobs := #[]
+    let shouldExport := self.supportInterpreter
+    for facet in self.root.nativeFacets shouldExport do
+      objJobs := objJobs.push <| ← facet.fetch self.root
+    let .ok imports _ ← (← self.root.transImports.fetch).wait
+      | error s!"bad imports (see the '{self.root.name.toString}' job for details)"
+    for mod in imports do
+      for facet in mod.nativeFacets shouldExport do
+        objJobs := objJobs.push <| ← facet.fetch mod
+    for link in self.moreLinkObjs do
+      objJobs := objJobs.push <| ← link.fetchIn self.pkg
+    let libs := imports.foldl (·.insert ·.lib) OrdHashSet.empty |>.toArray
+    for lib in libs do
+      for link in lib.moreLinkObjs do
+        objJobs := objJobs.push <| ← link.fetchIn lib.pkg
+      for link in lib.moreLinkLibs do
+        libJobs := libJobs.push <| ← link.fetchIn lib.pkg
+    for link in self.moreLinkLibs do
+      libJobs := libJobs.push <| ← link.fetchIn self.pkg
+    let deps := (← (← self.pkg.transDeps.fetch).await).push self.pkg
+    for dep in deps do
+      for lib in dep.externLibs do
+        objJobs := objJobs.push <| ← lib.static.fetch
+    buildLeanExe self.file objJobs libJobs self.weakLinkArgs self.linkArgs self.sharedLean
 
 /-- The facet configuration for the builtin `LeanExe.exeFacet`. -/
 public def LeanExe.exeFacetConfig : LeanExeFacetConfig exeFacet :=
