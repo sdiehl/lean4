@@ -37,6 +37,10 @@ public inductive Backend
   -/
   | rust
   /--
+  Force the VM (bytecode) backend.
+  -/
+  | vm
+  /--
   Use the default backend. Can be overridden by more specific configuration.
   -/
   | default
@@ -51,6 +55,7 @@ public def ofString? (s : String) : Option Backend :=
   | "c" => some .c
   | "llvm" => some .llvm
   | "rust" => some .rust
+  | "vm" => some .vm
   | "default" => some .default
   | _ => none
 
@@ -59,6 +64,7 @@ public protected def toString (bt : Backend) : String :=
   | .c => "c"
   | .llvm => "llvm"
   | .rust => "rust"
+  | .vm => "vm"
   | .default => "default"
 
 instance : ToString Backend := ⟨Backend.toString⟩

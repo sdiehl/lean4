@@ -135,6 +135,7 @@ protected def Backend.toLean : Backend → Term
 | .c => mkCIdent ``c
 | .llvm => mkCIdent ``llvm
 | .rust => mkCIdent ``rust
+| .vm => mkCIdent ``vm
 | .default => mkCIdent ``default
 
 instance : ToLean Backend := ⟨Backend.toLean⟩

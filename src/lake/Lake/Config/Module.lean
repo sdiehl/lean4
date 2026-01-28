@@ -137,6 +137,9 @@ public def bcFile? (self : Module) : Option FilePath :=
 @[inline] public def rsFile (self : Module) : FilePath :=
   self.irPath "rs"
 
+@[inline] public def vmFile (self : Module) : FilePath :=
+  self.irPath "leanbc"
+
 @[inline] public def bcoFile (self : Module) : FilePath :=
   self.irPath "bc.o"
 

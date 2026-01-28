@@ -31,6 +31,7 @@ import Lake.CLI.Error
 import Lake.CLI.Actions
 import Lake.CLI.Translate
 import Lake.CLI.Serve
+import Lake.Build.Infos
 import Init.Data.String.Search
 
 -- # CLI
@@ -832,7 +833,32 @@ protected def exe : CliM PUnit := do
   let ws ← loadWorkspace config
   let exe ← parseExeTargetSpec ws exeSpec
   let exeFile ← ws.runBuild exe.fetch (mkBuildConfig opts)
-  exit <| ← (Lake.env exeFile.toString args.toArray).run <| mkLakeContext ws
+  -- Check if VM backend - need to invoke lean4-vm directly
+  if exe.root.backend == .vm then
+    -- Get the import bytecode file paths
+    let imports : Array Module ← ws.runBuild exe.root.transImports.fetch (mkBuildConfig opts)
+    let importVmFiles : Array FilePath := imports.map (·.vmFile)
+    -- Find lean4-vm: LEAN4_VM env var or PATH
+    let vmExe ← do
+      if let some path ← IO.getEnv "LEAN4_VM" then
+        pure <| FilePath.mk path
+      else
+        pure <| FilePath.mk "lean4-vm"
+    -- Build command: lean4-vm -I import1 -I import2 ... entry args...
+    -- Build -I args for imports
+    let importArgs : Array String := importVmFiles.foldl (init := #[]) fun acc imp =>
+      acc ++ #["-I", imp.toString]
+    let vmArgs := importArgs ++ #[exeFile.toString] ++ args.toArray
+    let child ← IO.Process.spawn {
+      cmd := vmExe.toString
+      args := vmArgs
+      stdin := .inherit
+      stdout := .inherit
+      stderr := .inherit
+    }
+    exit <| ← child.wait
+  else
+    exit <| ← (Lake.env exeFile.toString args.toArray).run <| mkLakeContext ws
 
 protected def lean : CliM PUnit := do
   processOptions lakeOption

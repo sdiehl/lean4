@@ -98,6 +98,7 @@ structure ModuleArtifacts where
   c? : Option System.FilePath := none
   bc? : Option System.FilePath := none
   rs? : Option System.FilePath := none
+  vm? : Option System.FilePath := none
   deriving Repr, Inhabited, ToJson, FromJson
 
 def ModuleArtifacts.oleanParts (arts : ModuleArtifacts) : Array System.FilePath := Id.run do

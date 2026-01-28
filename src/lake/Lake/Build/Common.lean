@@ -911,3 +911,19 @@ public def buildRustExe
         if (← initRustDir.pathExists) then pure (some initRustDir) else pure none
       compileRustExe exeFile entryRs importRsFiles runtimeLib runtimeDeps rustc rustfmt keepArtifacts initRustDir?
     return art.path
+
+/--
+Build the bytecode files for the VM backend.
+
+The VM backend doesn't compile to native code. This function ensures all bytecode
+files are built and returns the entry module's bytecode path. The actual execution
+via `lean4-vm` is handled by `lake exe` which invokes the VM directly.
+-/
+public def buildVmExe
+  (entryVmJob : Job FilePath) (importVmJobs : Array (Job FilePath))
+: SpawnM (Job FilePath) :=
+  entryVmJob.bindM (sync := true) fun entryVm => do
+  -- Wait for all import bytecode files to be built
+  (Job.collectArray importVmJobs "importVmFiles").mapM fun _ => do
+    -- Just return the entry bytecode path - lake exe handles invocation
+    return entryVm

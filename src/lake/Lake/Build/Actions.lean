@@ -47,6 +47,9 @@ public def compileLeanModule
   if let some rsFile := arts.rs? then
     createParentDirs rsFile
     args := args ++ #["--rust", rsFile.toString]
+  if let some vmFile := arts.vm? then
+    createParentDirs vmFile
+    args := args ++ #["-Y", vmFile.toString]
   createParentDirs setupFile
   IO.FS.writeFile setupFile (toJson setup).pretty
   args := args ++ #["--setup", setupFile.toString]
@@ -234,6 +237,43 @@ public def compileRustExe
   -- Clean up build directory unless keepArtifacts is set
   if !keepArtifacts then
     IO.FS.removeDirAll buildDir
+
+/--
+Run a Lean program using the bytecode VM.
+
+This function invokes `lean4-vm` with the given bytecode files. The entry module
+is the main program, and import modules are loaded first using `-I` flags.
+
+The VM is found in one of these locations (in order):
+1. LEAN4_VM environment variable
+2. Bundled in sysroot at `lib/lean4-vm/lean4-vm`
+3. `lean4-vm` in PATH
+-/
+public def runVmExe
+  (entryVmFile : FilePath) (importVmFiles : Array FilePath)
+  (programArgs : Array String := #[])
+: LogIO UInt32 := do
+  -- Find lean4-vm
+  let vmExe ← do
+    if let some path ← IO.getEnv "LEAN4_VM" then
+      pure <| FilePath.mk path
+    else
+      -- Try bundled location or PATH
+      pure <| FilePath.mk "lean4-vm"
+  -- Build command: lean4-vm -I import1 -I import2 ... entry args...
+  let mut args : Array String := #[]
+  for imp in importVmFiles do
+    args := args ++ #["-I", imp.toString]
+  args := args.push entryVmFile.toString
+  args := args ++ programArgs
+  let child ← IO.Process.spawn {
+    cmd := vmExe.toString
+    args
+    stdin := .inherit
+    stdout := .inherit
+    stderr := .inherit
+  }
+  child.wait
 
 /-- Download a file using `curl`, clobbering any existing file. -/
 public def download

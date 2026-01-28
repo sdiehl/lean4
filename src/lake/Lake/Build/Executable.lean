@@ -36,6 +36,15 @@ private def LeanExe.recBuildExe (self : LeanExe) : FetchM (Job FilePath) :=
     for mod in imports do
       importRsJobs := importRsJobs.push <| ← mod.rs.fetch
     buildRustExe self.file entryRsJob importRsJobs
+  else if self.root.backend == .vm then
+    -- VM backend: collect .leanbc files (lake exe handles invocation)
+    let entryVmJob ← self.root.vm.fetch
+    let .ok imports _ ← (← self.root.transImports.fetch).wait
+      | error s!"bad imports (see the '{self.root.name.toString}' job for details)"
+    let mut importVmJobs := #[]
+    for mod in imports do
+      importVmJobs := importVmJobs.push <| ← mod.vm.fetch
+    buildVmExe entryVmJob importVmJobs
   else
     -- C/LLVM backend: collect object files and link with cc
     let mut objJobs := #[]

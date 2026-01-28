@@ -569,6 +569,7 @@ public def Module.clearOutputArtifacts (mod : Module) : IO PUnit := do
   removeFileIfExists mod.cFile
   removeFileIfExists mod.bcFile
   removeFileIfExists mod.rsFile
+  removeFileIfExists mod.vmFile
 
 /-- Remove any cached file hashes of the module build outputs (in `.hash` files). -/
 public def Module.clearOutputHashes (mod : Module) : IO PUnit := do
@@ -580,6 +581,7 @@ public def Module.clearOutputHashes (mod : Module) : IO PUnit := do
   clearFileHash mod.cFile
   clearFileHash mod.bcFile
   clearFileHash mod.rsFile
+  clearFileHash mod.vmFile
 
 /-- Cache the file hashes of the module build outputs in `.hash` files. -/
 public def Module.cacheOutputHashes (mod : Module) : IO PUnit := do
@@ -596,6 +598,8 @@ public def Module.cacheOutputHashes (mod : Module) : IO PUnit := do
     cacheFileHash mod.bcFile
   if (← mod.rsFile.pathExists) then
     cacheFileHash mod.rsFile
+  if (← mod.vmFile.pathExists) then
+    cacheFileHash mod.vmFile
 
 def ModuleOutputDescrs.getArtifactsFrom
   (cache : Cache) (descrs : ModuleOutputDescrs)
@@ -609,6 +613,7 @@ def ModuleOutputDescrs.getArtifactsFrom
     c :=← cache.getArtifact descrs.c
     bc? := none
     rs? := ← descrs.rs?.mapM cache.getArtifact
+    vm? := ← descrs.vm?.mapM cache.getArtifact
   }
   if Lean.Internal.hasLLVMBackend () then
     let some descr := descrs.bc?
@@ -642,6 +647,7 @@ private def Module.cacheOutputArtifacts
     c := ← cache mod.cFile "c"
     bc? := ← cacheIf? (Lean.Internal.hasLLVMBackend ()) mod.bcFile "bc"
     rs? := ← cacheIf? (← mod.rsFile.pathExists) mod.rsFile "rs"
+    vm? := ← cacheIf? (← mod.vmFile.pathExists) mod.vmFile "vm"
   }
 where
   @[inline] cache file ext := do
@@ -677,6 +683,7 @@ private def Module.restoreAllArtifacts (mod : Module) (cached : ModuleOutputArti
     c := ← restoreModuleArtifact mod.cFile cached.c
     bc? := ← restoreSome mod.bcFile cached.bc?
     rs? := ← restoreSome mod.rsFile cached.rs?
+    vm? := ← restoreSome mod.vmFile cached.vm?
   }
 where
   @[inline] restoreSome file art? :=
@@ -693,6 +700,7 @@ private def Module.mkArtifacts (mod : Module) (srcFile : FilePath) (isModule : B
   c? := mod.cFile
   bc? := if Lean.Internal.hasLLVMBackend () then some mod.bcFile else none
   rs? := if mod.backend == .rust then some mod.rsFile else none
+  vm? := if mod.backend == .vm then some mod.vmFile else none
 
 private def Module.computeArtifacts (mod : Module) (isModule : Bool) : FetchM ModuleOutputArtifacts :=
   return {
@@ -704,6 +712,7 @@ private def Module.computeArtifacts (mod : Module) (isModule : Bool) : FetchM Mo
     c := ← compute mod.cFile "c"
     bc? := ← computeIf (Lean.Internal.hasLLVMBackend ()) mod.bcFile "bc"
     rs? := ← computeIf (mod.backend == .rust) mod.rsFile "rs"
+    vm? := ← computeIf (mod.backend == .vm) mod.vmFile "vm"
   }
 where
   @[inline] compute file ext := do
@@ -891,6 +900,21 @@ public def Module.rsFacetConfig : ModuleFacetConfig rsFacet :=
       addTrace art.trace
       return art.path
 
+/-- The `ModuleFacetConfig` for the builtin `vmFacet`. -/
+public def Module.vmFacetConfig : ModuleFacetConfig vmFacet :=
+  mkFacetJobConfig fun mod => do
+    (← mod.leanArts.fetch).mapM (sync := true) fun arts => do
+      let some art := arts.vm?
+        | error "No bytecode file generated. Ensure the VM backend is enabled."
+      /-
+      Avoid recompiling unchanged bytecode files.
+      Bytecode files are assumed to only depend on their content
+      and not transitively on their inputs (e.g., imports).
+      -/
+      newTrace s!"{mod.name.toString}:vm"
+      addTrace art.trace
+      return art.path
+
 /--
 Recursively build the module's object file from its C file produced by `lean`
 with `-DLEAN_EXPORTING` set, which exports Lean symbols defined within the C files.
@@ -942,6 +966,7 @@ public def Module.oExportFacetConfig : ModuleFacetConfig oExportFacet :=
     | .default | .c => mod.coExport.fetch
     | .llvm => mod.bco.fetch
     | .rust => error "the Rust backend does not produce object files; use rustc to compile .rs files"
+    | .vm => error "the VM backend does not produce object files; use lean4-vm to run bytecode"
 
 /-- The `ModuleFacetConfig` for the builtin `oNoExportFacet`. -/
 public def Module.oNoExportFacetConfig : ModuleFacetConfig oNoExportFacet :=
@@ -950,6 +975,7 @@ public def Module.oNoExportFacetConfig : ModuleFacetConfig oNoExportFacet :=
     | .default | .c => mod.coNoExport.fetch
     | .llvm => error "the LLVM backend only supports exporting Lean symbols"
     | .rust => error "the Rust backend does not produce object files; use rustc to compile .rs files"
+    | .vm => error "the VM backend does not produce object files; use lean4-vm to run bytecode"
 
 /-- The `ModuleFacetConfig` for the builtin `oFacet`. -/
 public def Module.oFacetConfig : ModuleFacetConfig oFacet :=
@@ -958,6 +984,7 @@ public def Module.oFacetConfig : ModuleFacetConfig oFacet :=
     | .default | .c => mod.co.fetch
     | .llvm => mod.bco.fetch
     | .rust => error "the Rust backend does not produce object files; use rustc to compile .rs files"
+    | .vm => error "the VM backend does not produce object files; use lean4-vm to run bytecode"
 
 /--
 Recursively build the shared library of a module
@@ -1017,6 +1044,7 @@ public def Module.initFacetConfigs : DNameMap ModuleFacetConfig :=
   |>.insert cFacet cFacetConfig
   |>.insert bcFacet bcFacetConfig
   |>.insert rsFacet rsFacetConfig
+  |>.insert vmFacet vmFacetConfig
   |>.insert coFacet coFacetConfig
   |>.insert coExportFacet coExportFacetConfig
   |>.insert coNoExportFacet coNoExportFacetConfig

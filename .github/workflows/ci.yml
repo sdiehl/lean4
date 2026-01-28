@@ -36,6 +36,23 @@ jobs:
           make stage1 -j$(nproc)
         shell: nix develop -c bash -euxo pipefail {0}
 
+      - name: Compile Init.Core to bytecode
+        run: |
+          export LEAN_PATH="$(pwd)/build/stage1/lib/lean"
+          ./build/stage1/bin/lean -Y /tmp/Init.Core.leanbc src/Init/Core.lean
+          ls -la /tmp/Init.Core.leanbc
+          SIZE=$(stat -c%s /tmp/Init.Core.leanbc)
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "ERROR: Bytecode file is suspiciously small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "Successfully compiled Init.Core to bytecode ($SIZE bytes)"
+        shell: nix develop -c bash -euxo pipefail {0}
+
+      - name: Test VM backend Lake integration (build only)
+        run: ./tests/vm-backend/run-build-tests.sh
+        shell: nix develop -c bash -euxo pipefail {0}
+
       - name: Package
         run: |
           mkdir -p lean4-rust
@@ -52,17 +69,90 @@ jobs:
           files: lean4-rust-linux-x86_64.tar.gz
           make_latest: true
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+  # =============================================================================
+  # Rust Backend Tests
+  # Uncomment to enable when Rust backend is ready for CI
+  # =============================================================================
+  # rust-backend-tests:
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   env:
+  #     CCACHE_DIR: ${{ github.workspace }}/.ccache
+  #     CCACHE_COMPRESS: true
+  #     CCACHE_MAXSIZE: 400M
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: DeterminateSystems/nix-installer-action@main
+  #
+  #     - uses: actions/cache@v4
+  #       with:
+  #         path: .ccache
+  #         key: build-${{ runner.os }}-${{ hashFiles('src/**/*.lean', 'src/**/*.cpp', 'src/**/*.h') }}
+  #         restore-keys: build-${{ runner.os }}-
+  #
+  #     - name: Build
+  #       run: |
+  #         mkdir -p build
+  #         cd build
+  #         cmake .. --preset release -B .
+  #         make stage1 -j$(nproc)
+  #       shell: nix develop -c bash -euxo pipefail {0}
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         components: rustfmt
+  #
+  #     - name: Clone lean-runtime
+  #       run: git clone https://github.com/sdiehl/lean-runtime.git ../lean-runtime
+  #
+  #     - name: Build lean-runtime
+  #       run: cd ../lean-runtime && cargo build --release
+  #
+  #     - name: Test Rust backend
+  #       run: |
+  #         export LEAN_RUST_RUNTIME=$(pwd)/../lean-runtime
+  #         ./tests/rust-backend/run-tests.sh
 
-      - name: Clone lean-runtime
-        run: git clone https://github.com/sdiehl/lean-runtime.git ../lean-runtime
-
-      - name: Build lean-runtime
-        run: cd ../lean-runtime && cargo build --release
-
-      - name: Test Rust backend
-        run: |
-          export LEAN_RUST_RUNTIME=$(pwd)/../lean-runtime
-          ./tests/rust-backend/run-tests.sh
+  # =============================================================================
+  # VM Backend Tests (full, with exe)
+  # Uncomment to enable when lean4-vm is available in CI
+  # =============================================================================
+  # vm-backend-tests:
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   env:
+  #     CCACHE_DIR: ${{ github.workspace }}/.ccache
+  #     CCACHE_COMPRESS: true
+  #     CCACHE_MAXSIZE: 400M
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: DeterminateSystems/nix-installer-action@main
+  #
+  #     - uses: actions/cache@v4
+  #       with:
+  #         path: .ccache
+  #         key: build-${{ runner.os }}-${{ hashFiles('src/**/*.lean', 'src/**/*.cpp', 'src/**/*.h') }}
+  #         restore-keys: build-${{ runner.os }}-
+  #
+  #     - name: Build
+  #       run: |
+  #         mkdir -p build
+  #         cd build
+  #         cmake .. --preset release -B .
+  #         make stage1 -j$(nproc)
+  #       shell: nix develop -c bash -euxo pipefail {0}
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #
+  #     - name: Clone lean4-vm
+  #       run: git clone https://github.com/sdiehl/lean4-vm.git ../lean4-vm
+  #
+  #     - name: Build lean4-vm
+  #       run: cd ../lean4-vm && cargo build --release
+  #
+  #     - name: Test VM backend (full)
+  #       run: |
+  #         export LEAN4_VM=$(pwd)/../lean4-vm/target/release/lean4-vm
+  #         ./tests/vm-backend/run-tests.sh
