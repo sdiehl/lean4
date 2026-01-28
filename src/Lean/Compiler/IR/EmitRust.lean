@@ -27,6 +27,10 @@ abbrev M := ReaderT Context (EStateM String String)
 @[inline] def getEnv : M Environment := Context.env <$> read
 @[inline] def getModName : M Name := Context.modName <$> read
 
+@[inline] def getModInitFn : M String := do
+  let pkg? := (← getEnv).getModulePackage?
+  return mkModuleInitializationFunctionName (← getModName) pkg?
+
 def getDecl (n : Name) : M Decl := do
   let env ← getEnv
   match findEnvDecl env n with
@@ -75,6 +79,11 @@ def toRustName (n : Name) : M String := do
 
 def emitRustName (n : Name) : M Unit :=
   toRustName n >>= emit
+
+/-- Convert a Lean module name to a valid Rust module identifier.
+    e.g. `Init.Prelude` → `"Init_Prelude"`, `MultiLib` → `"MultiLib"` -/
+def moduleNameToRustIdent (n : Name) : String :=
+  n.mangle ""
 
 def getJPParams (j : JoinPointId) : M (Array Param) := do
   let ctx ← read
@@ -295,12 +304,8 @@ def emitFullApp (z : VarId) (f : FunId) (ys : Array Arg) : M Unit := do
   match decl with
   | .fdecl (xs := ps) .. | .extern (xs := ps) (ext := { entries := [.opaque], .. }) .. =>
     if ps.size == 0 then
-      emit "_init_"
+      -- Read from static variable (initialized by emitInitFn)
       emitRustName f
-      emit "()"
-      if decl.resultType.isObj then
-        emitLn ";"
-        emit "if !lean_is_scalar("; emit z; emit ") { lean_mark_persistent("; emit z; emit "); }"
     else if ys.size > 0 then
       emitRustName f
       let (ys, _) := ys.zip ps |>.filter (fun (_, p) => !p.ty.isVoid) |>.unzip
@@ -555,7 +560,6 @@ def emitDeclAux (d : Decl) : M Unit := do
     match d with
     | .fdecl (f := f) (xs := xs) (type := t) (body := b) .. =>
       let baseName ← toRustName f
-      emitLn "#[no_mangle]"
       emit "pub unsafe fn "
       if xs.size > 0 then
         let xs := xs.filter (fun p => !p.ty.isVoid)
@@ -593,10 +597,108 @@ def emitFns : M Unit := do
   let decls := getDecls env
   decls.reverse.forM emitDecl
 
-/-- Emit `extern "Rust"` declarations for functions defined in imported modules
-    that are referenced by the current module's function bodies. This enables
-    separate compilation: each module's .rs file can be compiled independently
-    and linked together. -/
+/-- Emit `pub static mut` declarations for zero-parameter declarations
+    (closed constants). These are initialized once by `emitInitFn`. -/
+def emitStaticDecls : M Unit := do
+  let env ← getEnv
+  let decls := getDecls env
+  decls.reverse.forM fun d => do
+    unless hasInitAttr env d.name do
+      if d.params.size == 0 then
+        emit "pub static mut "; emitRustName d.name
+        emit ": "; emit (toRustType d.resultType)
+        emit " = "; emit (defaultValueForType d.resultType); emitLn ";"
+  emitLn ""
+
+/-- Mark a declaration's static variable as persistent if it has object type. -/
+def emitMarkPersistent (d : Decl) : M Unit := do
+  if d.resultType.isObj then
+    emit "if !lean_is_scalar("; emitRustName d.name; emit ") { lean_mark_persistent("; emitRustName d.name; emitLn "); }"
+
+/-- Emit initialization code for a single declaration inside `emitInitFn`.
+    Mirrors EmitC.lean's `emitDeclInit`. -/
+def emitDeclInit (d : Decl) : M Unit := do
+  let env ← getEnv
+  let n := d.name
+  if isIOUnitInitFn env n then
+    if isIOUnitBuiltinInitFn env n then
+      emitLn "if builtin != 0 {"
+    emit "res = "; emitRustName n; emitLn "();"
+    emitLn "if !lean_io_result_is_ok(res) { return res; }"
+    emitLn "lean_dec_ref(res);"
+    if isIOUnitBuiltinInitFn env n then
+      emitLn "}"
+  else if d.params.size == 0 then
+    match getInitFnNameFor? env d.name with
+    | some initFn =>
+      if getBuiltinInitFnNameFor? env d.name |>.isSome then
+        emitLn "if builtin != 0 {"
+      emit "res = "; emitRustName initFn; emitLn "();"
+      emitLn "if !lean_io_result_is_ok(res) { return res; }"
+      emitRustName n
+      if d.resultType.isScalar then
+        emit " = "; emit (getUnboxOpName d.resultType); emitLn "(lean_io_result_get_value(res));"
+      else
+        emitLn " = lean_io_result_get_value(res);"
+        emitMarkPersistent d
+      emitLn "lean_dec_ref(res);"
+      if getBuiltinInitFnNameFor? env d.name |>.isSome then
+        emitLn "}"
+    | _ =>
+      emitRustName n; emit " = _init_"; emitRustName n; emitLn "();"
+      emitMarkPersistent d
+
+/-- Emit the module initialization function. Each module gets one.
+    Guards against re-initialization, calls imported module inits,
+    then initializes local closed constants. Mirrors EmitC.lean's `emitInitFn`. -/
+def emitInitFn : M Unit := do
+  let env ← getEnv
+  let modInitFn ← getModInitFn
+  -- Determine if we have external Lean-defined declarations (multi-module mode)
+  let decls := getDecls env
+  let modDecls : NameSet := decls.foldl (fun s d => s.insert d.name) {}
+  let usedDecls : NameSet := decls.foldl (fun s d => collectUsedDecls env d (s.insert d.name)) {}
+  let externDecls := usedDecls.toList.filter (fun n => !modDecls.contains n)
+  let mut hasExternalLeanDecls := false
+  for n in externDecls do
+    let decl ← getDecl n
+    -- Check if this declaration is a C extern or a boxed wrapper of one
+    let isCExtern := (getExternNameFor env `c decl.name).isSome
+    let isBoxedCExtern := n.isStr && n.getString! == "_boxed" &&
+      (getExternNameFor env `c n.getPrefix).isSome
+    unless isCExtern || isBoxedCExtern do
+      hasExternalLeanDecls := true; break
+  -- Collect imported module init functions (only in multi-module mode)
+  let mut impInitCalls : Array (String × String) := #[]  -- (rustModIdent, initFnName)
+  if hasExternalLeanDecls then
+    for imp in env.imports do
+      let some idx := env.getModuleIdx? imp.module
+        | throw "(internal) import without module index"
+      let pkg? := env.getModulePackageByIdx? idx
+      let fn := mkModuleInitializationFunctionName imp.module pkg?
+      let rustMod := moduleNameToRustIdent imp.module
+      impInitCalls := impInitCalls.push (rustMod, fn)
+  -- Emit the init function
+  emitLn ""
+  emitLn "static mut G_INITIALIZED: bool = false;"
+  emit "pub unsafe fn "; emit modInitFn; emitLn "(builtin: u8) -> *mut LeanObject {"
+  emitLn "if G_INITIALIZED { return lean_io_result_mk_ok(lean_box(0)); }"
+  emitLn "G_INITIALIZED = true;"
+  emitLn "let mut res: *mut LeanObject;"
+  -- Call imported module init functions
+  for (rustMod, fn) in impInitCalls do
+    emit "res = crate::"; emit rustMod; emit "::"; emit fn; emitLn "(builtin);"
+    emitLn "if !lean_io_result_is_ok(res) { return res; }"
+    emitLn "lean_dec_ref(res);"
+  -- Initialize local declarations
+  decls.reverse.forM emitDeclInit
+  emitLn "lean_io_result_mk_ok(lean_box(0))"
+  emitLn "}"
+
+/-- Emit `use crate::module::*` imports for functions defined in imported modules
+    that are referenced by the current module's function bodies. In multi-module
+    mode, each module is a separate .rs file within a Cargo crate, and cross-module
+    references use Rust's module system. -/
 def emitExternDecls : M Unit := do
   let env ← getEnv
   let decls := getDecls env
@@ -606,54 +708,72 @@ def emitExternDecls : M Unit := do
   let usedDecls : NameSet := decls.foldl (fun s d => collectUsedDecls env d (s.insert d.name)) {}
   -- Find imported declarations (used but not defined locally)
   let externDecls := usedDecls.toList.filter (fun n => !modDecls.contains n)
-  unless externDecls.isEmpty do
-    emitLn "extern \"Rust\" {"
-    externDecls.forM fun n => do
-      let decl ← getDecl n
-      -- Skip extern C functions (provided by runtime or C libraries)
-      match getExternNameFor env `c decl.name with
-      | some _ => pure ()
-      | none =>
-        unless hasInitAttr env decl.name do
-          let ps := decl.params
-          let baseName ← toRustName n
-          if ps.isEmpty then
-            emit "    fn _init_"; emit baseName; emit "() -> "; emit (toRustType decl.resultType); emitLn ";"
-          else
-            let ps := ps.filter (fun p => !p.ty.isVoid)
-            emit "    fn "; emit baseName; emit "("
-            ps.size.forM fun i _ => do
-              if i > 0 then emit ", "
-              emit "_: "; emit (toRustType ps[i].ty)
-            emit ") -> "; emit (toRustType decl.resultType); emitLn ";"
-    emitLn "}"
-    emitLn ""
+  -- Collect unique source modules for non-C-extern declarations
+  let mut moduleNames : NameSet := {}
+  for n in externDecls do
+    let decl ← getDecl n
+    -- Check if this declaration is a C extern (e.g. @[extern "lean_nat_dec_eq"])
+    let isCExtern := (getExternNameFor env `c decl.name).isSome
+    -- Check if this is a boxed wrapper of a C extern (e.g. Nat.decEq._boxed)
+    let isBoxedCExtern := n.isStr && n.getString! == "_boxed" &&
+      (getExternNameFor env `c n.getPrefix).isSome
+    if isCExtern || isBoxedCExtern then
+      pure ()  -- C runtime function (or its boxed wrapper), provided by lean_runtime crate
+    else
+      match env.getModuleIdxFor? n with
+      | some idx =>
+        if h : idx.toNat < env.header.moduleNames.size then
+          let modName := env.header.moduleNames[idx.toNat]
+          moduleNames := moduleNames.insert modName
+      | none => pure ()
+  -- Emit use declarations for each source module
+  for modName in moduleNames.toList do
+    emit "use crate::"; emit (moduleNameToRustIdent modName); emitLn "::*;"
+  unless moduleNames.isEmpty do emitLn ""
 
 def emitFileHeader : M Unit := do
+  let env ← getEnv
   let modName ← getModName
   emitLn "// Lean compiler output (Rust backend)"
   emit "// Module: "; emitLn modName
+  emit "// Imports:"
+  env.imports.forM fun m => emit (" " ++ toString m.module)
+  emitLn ""
   emitLn "#![allow(unused_variables)]"
   emitLn "#![allow(unused_mut)]"
   emitLn "#![allow(unused_parens)]"
   emitLn "#![allow(non_snake_case)]"
+  emitLn "#![allow(non_upper_case_globals)]"
   emitLn "#![allow(dead_code)]"
   emitLn "#![allow(unreachable_code)]"
   emitLn "#![allow(unused_assignments)]"
-  emitLn "#![allow(improper_ctypes)]"
+  emitLn "#![allow(unused_unsafe)]"
   emitLn ""
   emitLn "use lean_runtime::*;"
   emitLn ""
 
 def emitMainFn : M Unit := do
   let d ← getDecl `main
+  let modInitFn ← getModInitFn
   match d with
   | .fdecl (xs := xs) .. => do
     let realParams := xs.filter (fun p => !p.ty.isVoid)
     let hasArgs := realParams.size >= 2
     emitLn ""
-    emitLn "fn main() {"
+    emitLn "pub fn main() {"
     emitLn "    unsafe {"
+    -- Initialize module (and transitively all imports)
+    emitLn "        lean_set_panic_messages(0);"
+    emit "        let res = "; emit modInitFn; emitLn "(1);"
+    emitLn "        lean_set_panic_messages(1);"
+    emitLn "        lean_io_mark_end_initialization();"
+    emitLn "        if !lean_io_result_is_ok(res) {"
+    emitLn "            lean_io_result_show_error(res);"
+    emitLn "            lean_dec_ref(res);"
+    emitLn "            std::process::exit(1);"
+    emitLn "        }"
+    emitLn "        lean_dec_ref(res);"
+    -- Call the Lean main function
     if hasArgs then
       emitLn "        let args: Vec<String> = std::env::args().collect();"
       emitLn "        let mut in_list = lean_box(0);"
@@ -668,6 +788,8 @@ def emitMainFn : M Unit := do
     else
       emit "        let res = "; emit leanMainFn; emitLn "();"
     emitLn "        if !lean_io_result_is_ok(res) {"
+    emitLn "            lean_io_result_show_error(res);"
+    emitLn "            lean_dec_ref(res);"
     emitLn "            std::process::exit(1);"
     emitLn "        }"
     emitLn "        lean_dec(res);"
@@ -685,8 +807,10 @@ def emitMainFnIfNeeded : M Unit := do
 
 def main : M Unit := do
   emitFileHeader
+  emitStaticDecls
   emitExternDecls
   emitFns
+  emitInitFn
   emitMainFnIfNeeded
 
 end EmitRust
