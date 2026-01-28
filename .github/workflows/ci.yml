@@ -55,9 +55,11 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p lean4-rust
-          cp -r build/stage1/bin lean4-rust/
-          cp -r build/stage1/lib lean4-rust/
+          mkdir -p lean4-rust/bin lean4-rust/lib/lean
+          cp -r build/stage1/bin/* lean4-rust/bin/
+          # Copy only essential shared libraries (not .olean dirs or static libs)
+          cp build/stage1/lib/lean/*.so lean4-rust/lib/lean/ 2>/dev/null || true
+          cp build/stage1/lib/lean/*.dylib lean4-rust/lib/lean/ 2>/dev/null || true
           tar -czvf lean4-rust-linux-x86_64.tar.gz lean4-rust
 
       - name: Release
