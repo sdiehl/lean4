@@ -672,7 +672,6 @@ def emitInitFn : M Unit := do
   -- Direct imports are those explicitly listed in the current module's `import` statements.
   -- We don't call init for transitively imported stdlib modules like Init.
   let currentPkg := env.getModulePackage?
-  let directImports : NameSet := env.imports.foldl (fun s i => s.insert i.module) {}
   let mut impInitCalls : Array (String × String) := #[]  -- (rustModIdent, initFnName)
   if hasExternalLeanDecls then
     for imp in env.imports do

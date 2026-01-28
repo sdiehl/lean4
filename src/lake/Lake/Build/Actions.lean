@@ -207,7 +207,7 @@ public def compileRustExe
     if i + targetLen <= entryContent.length then
       let mut found := true
       for j in [0:targetLen] do
-        if entryContent.get ⟨i + j⟩ != target.get ⟨j⟩ then
+        if String.Pos.Raw.get entryContent ⟨i + j⟩ != String.Pos.Raw.get target ⟨j⟩ then
           found := false
           break
       if found then

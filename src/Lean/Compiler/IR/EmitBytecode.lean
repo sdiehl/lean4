@@ -650,7 +650,7 @@ partial def emitCase (x : VarId) (xType : IRType) (alts : Array Alt) : M Unit :=
     emitByte opSwitch
     emitU16 numCases.toUInt16
     -- Emit placeholder offsets
-    let switchBase ← currentOffset
+    let _switchBase ← currentOffset
     let mut caseLabels : Array UInt32 := #[]
     for _ in [:numCases] do
       let lbl ← newLabel
@@ -790,7 +790,7 @@ def compileFunction (d : Decl) (funcIdx : UInt32) : M Unit := do
         functions := s.modState.functions.set! funcIdx.toNat cf
       }}
 
-  | .extern (f := name) (xs := params) (ext := extData) .. =>
+  | .extern (f := _name) (xs := params) (ext := extData) .. =>
     -- Register extern
     match getExternEntryFor extData `c with
     | some (.standard _ extName) =>
