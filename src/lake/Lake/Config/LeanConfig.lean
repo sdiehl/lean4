@@ -33,6 +33,10 @@ public inductive Backend
   -/
   | llvm
   /--
+  Force the Rust backend.
+  -/
+  | rust
+  /--
   Use the default backend. Can be overridden by more specific configuration.
   -/
   | default
@@ -46,6 +50,7 @@ public def ofString? (s : String) : Option Backend :=
   match s with
   | "c" => some .c
   | "llvm" => some .llvm
+  | "rust" => some .rust
   | "default" => some .default
   | _ => none
 
@@ -53,6 +58,7 @@ public protected def toString (bt : Backend) : String :=
   match bt with
   | .c => "c"
   | .llvm => "llvm"
+  | .rust => "rust"
   | .default => "default"
 
 instance : ToString Backend := ⟨Backend.toString⟩

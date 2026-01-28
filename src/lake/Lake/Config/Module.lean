@@ -134,6 +134,9 @@ public abbrev pkg (self : Module) : Package :=
 public def bcFile? (self : Module) : Option FilePath :=
   if Lean.Internal.hasLLVMBackend () then some self.bcFile else none
 
+@[inline] public def rsFile (self : Module) : FilePath :=
+  self.irPath "rs"
+
 @[inline] public def bcoFile (self : Module) : FilePath :=
   self.irPath "bc.o"
 

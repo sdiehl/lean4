@@ -22,6 +22,7 @@ public structure ModuleOutputDescrs where
   ir? : Option ArtifactDescr := none
   c : ArtifactDescr
   bc? : Option ArtifactDescr := none
+  rs? : Option ArtifactDescr := none
 
 public def ModuleOutputDescrs.oleanParts (self : ModuleOutputDescrs) : Array ArtifactDescr := Id.run do
   let mut descrs := #[self.olean]
@@ -40,6 +41,8 @@ public protected def ModuleOutputDescrs.toJson (self : ModuleOutputDescrs) : Jso
   obj := obj.insert "c" self.c
   if let some bc := self.bc? then
     obj := obj.insert "b" bc
+  if let some rs := self.rs? then
+    obj := obj.insert "s" rs
   return obj
 
 public instance : ToJson ModuleOutputDescrs := ⟨ModuleOutputDescrs.toJson⟩
@@ -57,6 +60,7 @@ public protected def ModuleOutputDescrs.fromJson? (val : Json) : Except String M
     ir? := ← obj.get? "r"
     c := ← obj.get "c"
     bc? := ← obj.get? "b"
+    rs? := ← obj.get? "s"
   }
 
 public instance : FromJson ModuleOutputDescrs := ⟨ModuleOutputDescrs.fromJson?⟩
@@ -70,6 +74,7 @@ public structure ModuleOutputArtifacts where
   ir? : Option Artifact := none
   c : Artifact
   bc? : Option Artifact := none
+  rs? : Option Artifact := none
 
 /-- Content hashes of the artifacts. -/
 public def ModuleOutputArtifacts.descrs (arts : ModuleOutputArtifacts) : ModuleOutputDescrs where
@@ -80,3 +85,4 @@ public def ModuleOutputArtifacts.descrs (arts : ModuleOutputArtifacts) : ModuleO
   ir? := arts.ir?.map (·.descr)
   c := arts.c.descr
   bc? := arts.bc?.map (·.descr)
+  rs? := arts.rs?.map (·.descr)
