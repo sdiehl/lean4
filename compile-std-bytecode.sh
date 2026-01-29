@@ -1,36 +1,20 @@
 #!/bin/bash
 # Compile all Std modules to bytecode with correct module names
 #
-# Usage: ./compile-std-bytecode.sh [std_source_dir] [output_dir]
+# Usage: ./compile-std-bytecode.sh [output_dir]
 #
-# This script compiles all Std/*.lean files to .leanbc bytecode files.
-# The Std source can be obtained from: https://github.com/leanprover/std4
-#
-# Example:
-#   git clone https://github.com/leanprover/std4 /tmp/std4
-#   ./compile-std-bytecode.sh /tmp/std4 /tmp/std-bytecode
+# This script compiles all Std/*.lean files from the Lean source tree
+# to .leanbc bytecode files.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LEAN="$SCRIPT_DIR/build/release/stage1/bin/lean"
-STD_DIR="${1:-}"
-OUTPUT_DIR="${2:-/tmp/std-bytecode}"
+SRC_DIR="$SCRIPT_DIR/src"
+OUTPUT_DIR="${1:-/tmp/std-bytecode}"
 
-if [ -z "$STD_DIR" ]; then
-    echo "Usage: $0 <std_source_dir> [output_dir]"
-    echo ""
-    echo "The Std source can be obtained with:"
-    echo "  git clone https://github.com/leanprover/std4 /tmp/std4"
-    echo ""
-    echo "Then run:"
-    echo "  $0 /tmp/std4 /tmp/std-bytecode"
-    exit 1
-fi
-
-if [ ! -d "$STD_DIR/Std" ]; then
-    echo "Error: Std source directory not found at $STD_DIR/Std"
-    echo "Expected directory structure: $STD_DIR/Std/*.lean"
+if [ ! -d "$SRC_DIR/Std" ]; then
+    echo "Error: Std source directory not found at $SRC_DIR/Std"
     exit 1
 fi
 
@@ -45,7 +29,7 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "Compiling Std modules to bytecode..."
-echo "Source: $STD_DIR"
+echo "Source: $SRC_DIR"
 echo "Output: $OUTPUT_DIR"
 echo ""
 
@@ -55,8 +39,8 @@ skipped=0
 
 # Find all Std .lean files
 while IFS= read -r -d '' lean_file; do
-    # Get relative path from std dir
-    rel_path="${lean_file#$STD_DIR/}"
+    # Get relative path from src dir
+    rel_path="${lean_file#$SRC_DIR/}"
     # Convert to module name (Std/Data/HashMap.lean -> Std.Data.HashMap)
     mod_name="${rel_path%.lean}"
     mod_name="${mod_name//\//.}"
@@ -69,7 +53,7 @@ while IFS= read -r -d '' lean_file; do
         continue
     fi
 
-    if "$LEAN" --root="$STD_DIR" -Y "$bc_file" "$lean_file" 2>/dev/null; then
+    if "$LEAN" --root="$SRC_DIR" -Y "$bc_file" "$lean_file" 2>/dev/null; then
         ((success++))
         # Show progress every 20 files
         if (( success % 20 == 0 )); then
@@ -79,7 +63,7 @@ while IFS= read -r -d '' lean_file; do
         ((failed++))
         echo "  FAILED: $mod_name"
     fi
-done < <(find "$STD_DIR/Std" -name "*.lean" -print0 | sort -z)
+done < <(find "$SRC_DIR/Std" -name "*.lean" -print0 | sort -z)
 
 echo ""
 echo "Done!"

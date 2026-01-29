@@ -538,13 +538,15 @@ partial def emitExpr (z : VarId) (t : IRType) (e : Expr) : M Unit := do
 -- Reference counting
 -- ============================================================================
 
-def emitInc (x : VarId) : M Unit := do
-  emitLoadVar x
-  emitByte opInc
+-- NOTE: Inc/Dec are no-ops for the bytecode VM.
+-- The VM uses Rust's RAII for automatic reference counting:
+-- - LoadLocal clones (rc+1)
+-- - Drop decrements (rc-1)
+-- This naturally handles the lifetime of values without explicit Inc/Dec.
 
-def emitDec (x : VarId) : M Unit := do
-  emitLoadVar x
-  emitByte opDec
+def emitInc (_x : VarId) : M Unit := pure ()
+
+def emitDec (_x : VarId) : M Unit := pure ()
 
 -- ============================================================================
 -- Field operations
