@@ -86,6 +86,7 @@ def opApply        : UInt8 := 0x42
 def opTailApply    : UInt8 := 0x43
 def opPartialApp   : UInt8 := 0x44
 def opCallExtern   : UInt8 := 0x45
+def opCallImport   : UInt8 := 0x46  -- Call imported bytecode function by name
 -- Control flow
 def opJump         : UInt8 := 0x50
 def opJumpIf       : UInt8 := 0x51
@@ -464,7 +465,7 @@ partial def emitExpr (z : VarId) (t : IRType) (e : Expr) : M Unit := do
         emitU32 funcIdx
         emitByte args.size.toUInt8
       | none =>
-        -- Imported module function - emit as extern call using mangled name
+        -- Imported function - emit as CallExtern with mangled name
         let env ← getEnv
         let mangledName := getSymbolStem env f
         emitArgs args
@@ -480,13 +481,14 @@ partial def emitExpr (z : VarId) (t : IRType) (e : Expr) : M Unit := do
     match ← getFuncIndex f with
     | some funcIdx =>
       -- Local function partial application
+      -- Format: opcode, func_id (u32), arity (u8), num_args (u8)
       emitArgs args
       emitByte opPartialApp
       emitU32 funcIdx
       emitByte arity.toUInt8
       emitByte args.size.toUInt8
     | none =>
-      -- Imported function - emit as extern call and rely on runtime for partial app
+      -- Imported function - emit as CallExtern with mangled name
       let env ← getEnv
       let mangledName := getSymbolStem env f
       emitArgs args
